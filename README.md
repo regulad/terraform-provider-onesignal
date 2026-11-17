@@ -43,12 +43,25 @@ Requires Go (the version in [`go.mod`](go.mod)), OpenTofu, `jq`, and
 | `make build`         | Builds the provider                                                                              |
 | `make test`          | Runs the client's unit tests                                                                     |
 | `make testacc`       | Also runs the resource tests, which drive OpenTofu against an in-memory fake of OneSignal's API |
+| `make testlive`      | Runs the live tests against OneSignal                                                            |
 | `make generate`      | Formats the examples and regenerates `docs/` from them, `templates/` and the schema              |
 | `make docs-validate` | Checks `docs/` with tfplugindocs                                                                 |
 
-Nothing in the test suite reaches OneSignal. The fake, in
-[`internal/onesignal/fake`](internal/onesignal/fake), follows the API's
-documented behaviour, quirks included.
+Nothing in `make test` or `make testacc` reaches OneSignal. The fake, in
+[`internal/onesignal/fake`](internal/onesignal/fake), follows what the live API
+was seen to do, quirks included, and its reference where nothing was seen.
+
+`make testlive` runs the live tests against OneSignal itself, in an app named
+`homelab-provider-test`, which must exist, with an Organization API key in
+`ONESIGNAL_ORGANIZATION_API_KEY`. They cover app import, API keys and
+templates.
+
+Not tested against OneSignal:
+
+- Segment writes, which OneSignal refuses on the Free plan.
+- The app's push credentials and APNs settings, which need real Apple,
+  Firebase and Safari credentials.
+- `email_bcc`, which needs OneSignal's own email platform.
 
 The docs are generated from the schema as OpenTofu reports it
 ([`tools/docs.sh`](tools/docs.sh)), so no Terraform binary is needed.

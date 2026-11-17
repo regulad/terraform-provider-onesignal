@@ -29,4 +29,8 @@ test:
 testacc:
 	TF_ACC=1 go test -v -cover -timeout 20m ./...
 
-.PHONY: default build install lint generate docs-validate fmt test testacc
+# The live tests, against OneSignal itself: see internal/provider/live_test.go.
+testlive:
+	ONESIGNAL_LIVE=1 TF_ACC=1 go test -v -timeout 20m -run '^TestLive' ./internal/provider/
+
+.PHONY: default build install lint generate docs-validate fmt test testacc testlive
