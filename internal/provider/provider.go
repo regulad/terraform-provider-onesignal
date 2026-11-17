@@ -1,109 +1,105 @@
-// Copyright IBM Corp. 2021, 2026
 // SPDX-License-Identifier: MPL-2.0
 
+// Package provider is the OneSignal provider: apps, app API keys, segments and
+// templates.
 package provider
 
 import (
 	"context"
-	"net/http"
+	"os"
 
-	"github.com/hashicorp/terraform-plugin-framework/action"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
-	"github.com/hashicorp/terraform-plugin-framework/ephemeral"
-	"github.com/hashicorp/terraform-plugin-framework/function"
 	"github.com/hashicorp/terraform-plugin-framework/provider"
 	"github.com/hashicorp/terraform-plugin-framework/provider/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+
+	"github.com/regulad/terraform-provider-onesignal/internal/onesignal"
 )
 
-// Ensure ScaffoldingProvider satisfies various provider interfaces.
-var _ provider.Provider = &ScaffoldingProvider{}
-var _ provider.ProviderWithFunctions = &ScaffoldingProvider{}
-var _ provider.ProviderWithEphemeralResources = &ScaffoldingProvider{}
-var _ provider.ProviderWithActions = &ScaffoldingProvider{}
+// Environment variables the provider falls back to.
+const (
+	EnvOrganizationAPIKey = "ONESIGNAL_ORGANIZATION_API_KEY"
+	EnvBaseURL            = "ONESIGNAL_BASE_URL"
+)
 
-// ScaffoldingProvider defines the provider implementation.
-type ScaffoldingProvider struct {
-	// version is set to the provider version on release, "dev" when the
-	// provider is built and ran locally, and "test" when running acceptance
-	// testing.
+var _ provider.Provider = &OneSignalProvider{}
+
+// OneSignalProvider is the provider.
+type OneSignalProvider struct {
 	version string
 }
 
-// ScaffoldingProviderModel describes the provider data model.
-type ScaffoldingProviderModel struct {
-	Endpoint types.String `tfsdk:"endpoint"`
+type providerModel struct {
+	OrganizationAPIKey types.String `tfsdk:"organization_api_key"`
+	BaseURL            types.String `tfsdk:"base_url"`
 }
 
-func (p *ScaffoldingProvider) Metadata(ctx context.Context, req provider.MetadataRequest, resp *provider.MetadataResponse) {
-	resp.TypeName = "scaffolding"
+// New returns the provider for version.
+func New(version string) func() provider.Provider {
+	return func() provider.Provider {
+		return &OneSignalProvider{version: version}
+	}
+}
+
+func (p *OneSignalProvider) Metadata(_ context.Context, _ provider.MetadataRequest, resp *provider.MetadataResponse) {
+	resp.TypeName = "onesignal"
 	resp.Version = p.version
 }
 
-func (p *ScaffoldingProvider) Schema(ctx context.Context, req provider.SchemaRequest, resp *provider.SchemaResponse) {
+func (p *OneSignalProvider) Schema(_ context.Context, _ provider.SchemaRequest, resp *provider.SchemaResponse) {
 	resp.Schema = schema.Schema{
+		MarkdownDescription: "Manages OneSignal's configuration: apps, app API keys, segments and templates.",
 		Attributes: map[string]schema.Attribute{
-			"endpoint": schema.StringAttribute{
-				MarkdownDescription: "Example provider attribute",
+			"organization_api_key": schema.StringAttribute{
+				MarkdownDescription: "An Organization API key, made in the OneSignal dashboard's organization settings. It manages apps and their API keys, and segments and templates unless they are given an app's own key. Falls back to `" + EnvOrganizationAPIKey + "`.",
+				Optional:            true,
+				Sensitive:           true,
+			},
+			"base_url": schema.StringAttribute{
+				MarkdownDescription: "OneSignal's API. Defaults to `" + onesignal.DefaultBaseURL + "`, or `" + EnvBaseURL + "`.",
 				Optional:            true,
 			},
 		},
 	}
 }
 
-func (p *ScaffoldingProvider) Configure(ctx context.Context, req provider.ConfigureRequest, resp *provider.ConfigureResponse) {
-	var data ScaffoldingProviderModel
-
-	resp.Diagnostics.Append(req.Config.Get(ctx, &data)...)
-
+func (p *OneSignalProvider) Configure(ctx context.Context, req provider.ConfigureRequest, resp *provider.ConfigureResponse) {
+	var config providerModel
+	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
-
-	// Configuration values are now available.
-	// if data.Endpoint.IsNull() { /* ... */ }
-
-	// Example client configuration for data sources and resources
-	client := http.DefaultClient
-	resp.DataSourceData = client
+	key := config.OrganizationAPIKey.ValueString()
+	if key == "" {
+		key = os.Getenv(EnvOrganizationAPIKey)
+	}
+	baseURL := config.BaseURL.ValueString()
+	if baseURL == "" {
+		baseURL = os.Getenv(EnvBaseURL)
+	}
+	if key == "" && !config.OrganizationAPIKey.IsUnknown() {
+		resp.Diagnostics.AddError("Missing Organization API key",
+			"Set organization_api_key or "+EnvOrganizationAPIKey+" to a OneSignal Organization API key, made in the dashboard's organization settings.")
+		return
+	}
+	client := onesignal.New(baseURL, key, "terraform-provider-onesignal/"+p.version)
 	resp.ResourceData = client
+	resp.DataSourceData = client
 }
 
-func (p *ScaffoldingProvider) Resources(ctx context.Context) []func() resource.Resource {
+func (p *OneSignalProvider) Resources(_ context.Context) []func() resource.Resource {
 	return []func() resource.Resource{
-		NewExampleResource,
+		NewAppResource,
+		NewAppAPIKeyResource,
+		NewSegmentResource,
+		NewTemplateResource,
 	}
 }
 
-func (p *ScaffoldingProvider) EphemeralResources(ctx context.Context) []func() ephemeral.EphemeralResource {
-	return []func() ephemeral.EphemeralResource{
-		NewExampleEphemeralResource,
-	}
-}
-
-func (p *ScaffoldingProvider) DataSources(ctx context.Context) []func() datasource.DataSource {
+func (p *OneSignalProvider) DataSources(_ context.Context) []func() datasource.DataSource {
 	return []func() datasource.DataSource{
-		NewExampleDataSource,
-	}
-}
-
-func (p *ScaffoldingProvider) Functions(ctx context.Context) []func() function.Function {
-	return []func() function.Function{
-		NewExampleFunction,
-	}
-}
-
-func (p *ScaffoldingProvider) Actions(ctx context.Context) []func() action.Action {
-	return []func() action.Action{
-		NewExampleAction,
-	}
-}
-
-func New(version string) func() provider.Provider {
-	return func() provider.Provider {
-		return &ScaffoldingProvider{
-			version: version,
-		}
+		NewAppDataSource,
+		NewAppsDataSource,
 	}
 }

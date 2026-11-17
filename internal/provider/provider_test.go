@@ -1,34 +1,53 @@
-// Copyright IBM Corp. 2021, 2026
 // SPDX-License-Identifier: MPL-2.0
 
 package provider
 
 import (
+	"fmt"
+	"os"
+	"os/exec"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/providerserver"
 	"github.com/hashicorp/terraform-plugin-go/tfprotov6"
-	"github.com/hashicorp/terraform-plugin-testing/echoprovider"
+	"github.com/hashicorp/terraform-plugin-testing/terraform"
+
+	"github.com/regulad/terraform-provider-onesignal/internal/onesignal/fake"
 )
 
-// testAccProtoV6ProviderFactories is used to instantiate a provider during acceptance testing.
-// The factory function is called for each Terraform CLI command to create a provider
-// server that the CLI can connect to and interact with.
-var testAccProtoV6ProviderFactories = map[string]func() (tfprotov6.ProviderServer, error){
-	"scaffolding": providerserver.NewProtocol6WithError(New("test")()),
+// The resource tests drive OpenTofu, whose implied provider address is on
+// registry.opentofu.org, against the fake API. They run under TF_ACC=1.
+func TestMain(m *testing.M) {
+	if os.Getenv("TF_ACC_TERRAFORM_PATH") == "" {
+		if tofu, err := exec.LookPath("tofu"); err == nil {
+			_ = os.Setenv("TF_ACC_TERRAFORM_PATH", tofu)
+		}
+	}
+	if os.Getenv("TF_ACC_PROVIDER_HOST") == "" {
+		_ = os.Setenv("TF_ACC_PROVIDER_HOST", "registry.opentofu.org")
+	}
+	os.Exit(m.Run())
 }
 
-// testAccProtoV6ProviderFactoriesWithEcho includes the echo provider alongside the scaffolding provider.
-// It allows for testing assertions on data returned by an ephemeral resource during Open.
-// The echoprovider is used to arrange tests by echoing ephemeral data into the Terraform state.
-// This lets the data be referenced in test assertions with state checks.
-var testAccProtoV6ProviderFactoriesWithEcho = map[string]func() (tfprotov6.ProviderServer, error){
-	"scaffolding": providerserver.NewProtocol6WithError(New("test")()),
-	"echo":        echoprovider.NewProviderServer(),
+var testFactories = map[string]func() (tfprotov6.ProviderServer, error){
+	"onesignal": providerserver.NewProtocol6WithError(New("test")()),
 }
 
-func testAccPreCheck(t *testing.T) {
-	// You can add code here to run prior to any test case execution, for example assertions
-	// about the appropriate environment variables being set are common to see in a pre-check
-	// function.
+// providerConfig points the provider at srv.
+func providerConfig(srv *fake.Server) string {
+	return fmt.Sprintf(`
+provider "onesignal" {
+  base_url             = %q
+  organization_api_key = %q
+}
+`, srv.URL, srv.OrganizationKey)
+}
+
+// stateAttr returns a resource attribute from state.
+func stateAttr(s *terraform.State, address, name string) (string, error) {
+	rs, ok := s.RootModule().Resources[address]
+	if !ok {
+		return "", fmt.Errorf("%s is not in state", address)
+	}
+	return rs.Primary.Attributes[name], nil
 }
