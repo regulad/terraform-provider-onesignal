@@ -1,0 +1,54 @@
+---
+page_title: "OneSignal Provider"
+description: |-
+  Manages OneSignal apps, their API keys, segments and templates.
+---
+
+# OneSignal Provider
+
+Manages the configuration of [OneSignal](https://onesignal.com) apps through
+OneSignal's REST API: the apps themselves, their API keys, segments and
+templates. Journeys, whose API is in beta, are not covered, nor is anything
+that is not configuration, such as users, subscriptions and messages.
+
+The provider is built for [OpenTofu](https://opentofu.org).
+
+## Installation
+
+Builds are served from the provider mirror at `https://opentofu.regulad.xyz/`,
+under the address `registry.opentofu.org/regulad/onesignal`. Add the mirror to
+the CLI configuration, after `direct`, so that every other provider still
+comes from its registry:
+
+```hcl
+provider_installation {
+  direct {
+    exclude = ["registry.opentofu.org/regulad/onesignal"]
+  }
+  network_mirror {
+    url     = "https://opentofu.regulad.xyz/"
+    include = ["registry.opentofu.org/regulad/onesignal"]
+  }
+}
+```
+
+Then lock it from the mirror:
+
+```shell
+tofu providers lock -net-mirror=https://opentofu.regulad.xyz/ registry.opentofu.org/regulad/onesignal
+```
+
+## Authentication
+
+The provider authenticates with an Organization API key, made in the
+OneSignal dashboard's organization settings. It covers apps
+and their API keys. Segments and templates are documented with an app's own
+API key; each of those resources takes an optional `api_key`, which is
+normally the `value` of an `onesignal_app_api_key` in the same configuration,
+and falls back to the Organization key.
+
+## Example Usage
+
+{{ tffile "examples/provider/provider.tf" }}
+
+{{ .SchemaMarkdown | trimspace }}

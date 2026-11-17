@@ -1,0 +1,37 @@
+---
+page_title: "{{.Name}} {{.Type}} - {{.RenderedProviderName}}"
+subcategory: ""
+description: |-
+{{ .Description | plainmarkdown | trimspace | prefixlines "  " }}
+---
+
+# {{.Name}} ({{.Type}})
+
+{{ .Description | trimspace }}
+
+{{ if .HasExamples -}}
+## Example Usage
+
+{{- range .ExampleFiles }}
+
+{{ tffile . }}
+{{- end }}
+{{- end }}
+
+{{ .SchemaMarkdown | trimspace }}
+{{- if or .HasImport .HasImportIDConfig }}
+
+## Import
+{{- end }}
+{{- if .HasImportIDConfig }}
+
+With an [`import` block](https://opentofu.org/docs/language/import/):
+
+{{ tffile .ImportIDConfigFile }}
+{{- end }}
+{{- if .HasImport }}
+
+With [`tofu import`](https://opentofu.org/docs/cli/commands/import/):
+
+{{ codefile "shell" .ImportFile }}
+{{- end }}

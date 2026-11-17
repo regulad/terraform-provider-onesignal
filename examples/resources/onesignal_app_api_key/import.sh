@@ -1,0 +1,2 @@
+# <app_id>/<token_id>
+tofu import onesignal_app_api_key.server 00000000-0000-0000-0000-000000000000/11111111-1111-1111-1111-111111111111

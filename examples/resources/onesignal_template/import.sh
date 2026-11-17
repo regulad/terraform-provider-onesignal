@@ -1,0 +1,2 @@
+# <app_id>/<template_id>
+tofu import onesignal_template.welcome 00000000-0000-0000-0000-000000000000/33333333-3333-3333-3333-333333333333
