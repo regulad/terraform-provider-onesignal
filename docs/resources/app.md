@@ -16,7 +16,6 @@ resource "onesignal_app" "example" {
   name              = "Example"
   organization_id   = "00000000-0000-0000-0000-000000000000"
   chrome_web_origin = "https://example.com"
-  site_name         = "Example"
 
   apns_env       = "production"
   apns_key_id    = "ABCDE12345"
@@ -45,9 +44,8 @@ resource "onesignal_app" "example" {
 
 > **NOTE**: [Write-only arguments](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments) are supported in Terraform 1.11 and later.
 
-- `additional_data_is_root_payload` (Boolean) Whether a notification's `data` goes in the push payload's root. Left unset, it is neither sent nor compared.
 - `apns_bundle_id` (String) The iOS app's bundle ID. Left unset, it is neither sent nor compared.
-- `apns_env` (String) The APNs environment of the `.p8` key. Left unset, it is neither sent nor compared.
+- `apns_env` (String) The APNs environment of the credential. OneSignal keeps it, like the other APNs settings, only alongside an APNs credential, sent with it or already held. Left unset, it is neither sent nor compared.
 - `apns_key_id` (String) The APNs Key ID of the `.p8` key. Left unset, it is neither sent nor compared.
 - `apns_p12_password_wo` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) The APNs `.p12` certificate's password. Write-only: never stored or compared; sent on create and when its version changes.
 - `apns_p12_wo` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) The APNs `.p12` certificate, base64. Write-only: never stored or compared; sent on create and when its version changes.
@@ -55,7 +53,6 @@ resource "onesignal_app" "example" {
 - `apns_p8_wo` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) The APNs `.p8` key, base64. Write-only: never stored or compared; sent on create and when its version changes.
 - `apns_p8_wo_version` (Number) Change it to send `apns_p8_wo` again.
 - `apns_team_id` (String) The Apple Team ID. Left unset, it is neither sent nor compared.
-- `chrome_web_default_notification_icon` (String) An HTTPS URL of the default web push icon. Left unset, it is neither sent nor compared.
 - `chrome_web_origin` (String) The HTTPS origin of the website, for web push. Left unset, it is neither sent nor compared.
 - `fcm_v1_service_account_json_wo` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) The Firebase service account's JSON, base64. Write-only: never stored or compared; sent on create and when its version changes.
 - `fcm_v1_service_account_json_wo_version` (Number) Change it to send `fcm_v1_service_account_json_wo` again.
@@ -64,16 +61,18 @@ resource "onesignal_app" "example" {
 - `safari_apns_p12_wo_version` (Number) Change it to send `safari_apns_p12_wo` and its password again.
 - `safari_icon_256_256` (String) A 256×256 icon for legacy Safari. Left unset, it is neither sent nor compared.
 - `safari_site_origin` (String) The HTTPS origin for Safari web push. Left unset, it is neither sent nor compared.
-- `site_name` (String) The website's name, used in web push titles. Left unset, it is neither sent nor compared.
 
 ### Read-Only
 
+- `additional_data_is_root_payload` (Boolean) Whether a notification's `data` goes in the push payload's root. OneSignal's API sets it to true and does not set it back, so it is set in the dashboard.
 - `apns_configured` (Boolean) Whether OneSignal holds an APNs credential.
+- `chrome_web_default_notification_icon` (String) An HTTPS URL of the default web push icon. OneSignal's API accepts it and does not change it, so it is set in the dashboard.
 - `chrome_web_key` (String) The web push VAPID public key.
 - `fcm_configured` (Boolean) Whether OneSignal holds a Firebase credential.
 - `fcm_sender_id` (String) The Firebase sender ID.
 - `id` (String) The App ID.
 - `safari_push_id` (String) The Safari web push ID.
+- `site_name` (String) The website's name, used in web push titles. OneSignal's API accepts it and does not change it, so it is set in the dashboard.
 - `web_configured` (Boolean) Whether web push is configured.
 
 ## Import

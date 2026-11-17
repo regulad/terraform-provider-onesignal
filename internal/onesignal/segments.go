@@ -32,7 +32,7 @@ func (c *Client) CreateSegment(ctx context.Context, appKey, appID string, s Segm
 		ID string `json:"id"`
 	}
 	body := Segment{ID: s.ID, Name: s.Name, Description: s.Description, Filters: s.Filters}
-	err := c.do(ctx, http.MethodPost, segmentsPath(appID), nil, c.key(appKey), body, &created)
+	err := c.do(ctx, http.MethodPost, segmentsPath(appID), nil, appKey, body, &created)
 	return created.ID, err
 }
 
@@ -48,7 +48,7 @@ func (c *Client) GetSegment(ctx context.Context, appKey, appID, id string) (*Seg
 		} `json:"payload"`
 	}
 	query := url.Values{"include-segment-detail": {"true"}}
-	if err := c.do(ctx, http.MethodGet, segmentsPath(appID)+"/"+url.PathEscape(id), query, c.key(appKey), nil, &view); err != nil {
+	if err := c.do(ctx, http.MethodGet, segmentsPath(appID)+"/"+url.PathEscape(id), query, appKey, nil, &view); err != nil {
 		return nil, err
 	}
 	if view.Payload == nil {
@@ -92,10 +92,10 @@ func (c *Client) UpdateSegment(ctx context.Context, appKey, appID, id string, s 
 		Description string   `json:"description"`
 		Filters     []Filter `json:"filters"`
 	}{s.Name, description, s.Filters}
-	return c.do(ctx, http.MethodPatch, segmentsPath(appID)+"/"+url.PathEscape(id), nil, c.key(appKey), body, nil)
+	return c.do(ctx, http.MethodPatch, segmentsPath(appID)+"/"+url.PathEscape(id), nil, appKey, body, nil)
 }
 
 // DeleteSegment deletes a segment.
 func (c *Client) DeleteSegment(ctx context.Context, appKey, appID, id string) error {
-	return c.do(ctx, http.MethodDelete, segmentsPath(appID)+"/"+url.PathEscape(id), nil, c.key(appKey), nil, nil)
+	return c.do(ctx, http.MethodDelete, segmentsPath(appID)+"/"+url.PathEscape(id), nil, appKey, nil, nil)
 }

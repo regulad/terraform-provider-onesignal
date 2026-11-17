@@ -22,6 +22,7 @@ func TestErrorMessages(t *testing.T) {
 		"structured": {`{"errors": [{"code": "invalid", "title": "Bad offset"}]}`, []string{"invalid Bad offset"}},
 		"single":     {`{"errors": "API rate limit exceeded"}`, []string{"API rate limit exceeded"}},
 		"empty":      {`{}`, nil},
+		"tagged":     {`{"errors": ["<p>You must provide your <strong>Site URL</strong>.</p>"]}`, []string{"You must provide your Site URL."}},
 		"html":       {`<html><head><title>The change you wanted was rejected (422)</title></head></html>`, []string{"The change you wanted was rejected (422)"}},
 		"nothing":    {``, nil},
 	} {
@@ -66,13 +67,6 @@ func TestErrorsAreNotRetried(t *testing.T) {
 	err := New(srv.URL, "org", "test").UpdateApp(context.Background(), "x", AppFields{"name": "y"})
 	if !IsNotFound(err) || calls.Load() != 1 {
 		t.Fatalf("got %v after %d calls", err, calls.Load())
-	}
-}
-
-func TestAppKeyFallsBackToOrganizationKey(t *testing.T) {
-	c := New("", "org", "test")
-	if c.key("") != "org" || c.key("app") != "app" {
-		t.Fatal("key fallback")
 	}
 }
 

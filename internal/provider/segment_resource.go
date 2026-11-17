@@ -5,6 +5,7 @@ package provider
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -77,18 +78,25 @@ func optionalString(desc string) schema.StringAttribute {
 	return schema.StringAttribute{MarkdownDescription: desc, Optional: true}
 }
 
-// appKeyAttribute is the optional App API key of app-level resources.
+// appKeyAttribute is the App API key segments and templates are managed with.
 func appKeyAttribute() schema.StringAttribute {
 	return schema.StringAttribute{
-		MarkdownDescription: "An App API key of the app, such as an `onesignal_app_api_key`'s `value`, for OneSignal's app-level endpoints. Unset, the provider's Organization API key is used.",
-		Optional:            true,
+		MarkdownDescription: "An App API key of the app, normally an `onesignal_app_api_key`'s `value`. OneSignal refuses the Organization API key for segments and templates.",
+		Required:            true,
 		Sensitive:           true,
 	}
 }
 
+// importedWithoutKey reports whether a resource was just imported, and so has
+// no App API key in state to read it with yet. Its first apply writes the
+// configuration over it.
+func importedWithoutKey(key types.String) bool {
+	return key.IsNull()
+}
+
 func (r *SegmentResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "A segment of an app, defined by filters. OneSignal's API cannot manage segments built on message-event or custom-event filters, and is not available on every plan.",
+		MarkdownDescription: "A segment of an app, defined by filters. OneSignal's API cannot manage segments built on message-event or custom-event filters, and refuses to create segments on some plans, the Free plan among them (HTTP 403). An imported segment is not read until its first apply, which needs `api_key` and writes the configuration over it.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				MarkdownDescription: "The segment's ID.",
@@ -193,9 +201,19 @@ func segmentFromModel(m *segmentModel) onesignal.Segment {
 	return s
 }
 
+// sameNumber reports whether two operands are the same number written two ways,
+// as OneSignal writes an hours_ago of "168" as "168.0".
+func sameNumber(a, b string) bool {
+	x, errA := strconv.ParseFloat(a, 64)
+	y, errB := strconv.ParseFloat(b, 64)
+	return errA == nil && errB == nil && x == y
+}
+
 // setFromSegment copies a segment into m, dropping the explicit AND operators
-// OneSignal spells out between adjacent filters.
+// OneSignal spells out between adjacent filters, and keeping m's spelling of an
+// operand OneSignal returns as the same number written differently.
 func setFromSegment(m *segmentModel, s *onesignal.Segment) {
+	prior := m.Filters
 	m.ID = types.StringValue(s.ID)
 	m.Name = types.StringValue(s.Name)
 	if s.Description == nil || *s.Description == "" {
@@ -210,11 +228,16 @@ func setFromSegment(m *segmentModel, s *onesignal.Segment) {
 			continue
 		}
 		var fm filterModel
+		i := len(m.Filters)
 		for _, ff := range filterFields {
-			if v, ok := f[ff.api]; ok {
-				*ff.attr(&fm) = types.StringValue(v)
-			} else {
+			v, ok := f[ff.api]
+			switch {
+			case !ok:
 				*ff.attr(&fm) = types.StringNull()
+			case i < len(prior) && sameNumber(ff.attr(&prior[i]).ValueString(), v):
+				*ff.attr(&fm) = *ff.attr(&prior[i])
+			default:
+				*ff.attr(&fm) = types.StringValue(v)
 			}
 		}
 		m.Filters = append(m.Filters, fm)
@@ -249,7 +272,7 @@ func (r *SegmentResource) Create(ctx context.Context, req resource.CreateRequest
 func (r *SegmentResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
 	var state segmentModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
-	if resp.Diagnostics.HasError() {
+	if resp.Diagnostics.HasError() || importedWithoutKey(state.APIKey) {
 		return
 	}
 	seg, err := r.client.GetSegment(ctx, state.APIKey.ValueString(), state.AppID.ValueString(), state.ID.ValueString())

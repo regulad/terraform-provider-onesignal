@@ -104,7 +104,7 @@ func (r *AppAPIKeyResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 				Required:            true,
 			},
 			"ip_allowlist": schema.SetAttribute{
-				MarkdownDescription: "The CIDR ranges, IPv4 or IPv6, the key may be used from. Unset or empty, it may be used from anywhere.",
+				MarkdownDescription: "The CIDR ranges, IPv4 or IPv6, the key may be used from; a single address is a `/32` or `/128`. Unset or empty, it may be used from anywhere.",
 				ElementType:         types.StringType,
 				Optional:            true,
 				Validators:          []validator.Set{setvalidator.ValueStringsAre(cidrValidator{})},
@@ -141,14 +141,51 @@ func allowlistOf(ctx context.Context, set types.Set) []string {
 	return list
 }
 
-// setFromAPIKey copies what OneSignal returns into m. An empty allowlist stays
-// empty or null as the model had it, so neither shows as drift.
+// network returns the network a CIDR range or a bare address denotes, in
+// canonical CIDR form. OneSignal takes only CIDR ranges, but returns a /32 or
+// /128 as a bare address, and IPv6 in canonical form.
+func network(s string) (string, bool) {
+	if _, n, err := net.ParseCIDR(s); err == nil {
+		return n.String(), true
+	}
+	ip := net.ParseIP(s)
+	if ip == nil {
+		return "", false
+	}
+	if v4 := ip.To4(); v4 != nil {
+		return (&net.IPNet{IP: v4, Mask: net.CIDRMask(32, 32)}).String(), true
+	}
+	return (&net.IPNet{IP: ip, Mask: net.CIDRMask(128, 128)}).String(), true
+}
+
+// setFromAPIKey copies what OneSignal returns into m. Each allowlist entry keeps
+// m's spelling of the same network, or else takes canonical CIDR form. An
+// empty allowlist stays empty or null as the model had it, so neither shows as
+// drift.
 func setFromAPIKey(ctx context.Context, m *appAPIKeyModel, k *onesignal.APIKey) {
 	m.ID = types.StringValue(k.TokenID)
 	m.Name = types.StringValue(k.Name)
 	m.CreatedAt = types.StringValue(k.CreatedAt)
 	if k.IPAllowlistMode == onesignal.AllowlistExplicit && len(k.IPAllowlist) > 0 {
-		m.IPAllowlist, _ = types.SetValueFrom(ctx, types.StringType, k.IPAllowlist)
+		spelled := map[string]string{}
+		for _, p := range allowlistOf(ctx, m.IPAllowlist) {
+			if n, ok := network(p); ok {
+				spelled[n] = p
+			}
+		}
+		entries := make([]string, 0, len(k.IPAllowlist))
+		for _, e := range k.IPAllowlist {
+			n, ok := network(e)
+			switch {
+			case ok && spelled[n] != "":
+				entries = append(entries, spelled[n])
+			case ok:
+				entries = append(entries, n)
+			default:
+				entries = append(entries, e)
+			}
+		}
+		m.IPAllowlist, _ = types.SetValueFrom(ctx, types.StringType, entries)
 	} else if !m.IPAllowlist.IsNull() && !m.IPAllowlist.IsUnknown() {
 		m.IPAllowlist, _ = types.SetValueFrom(ctx, types.StringType, []string{})
 	} else {

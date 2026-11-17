@@ -41,7 +41,7 @@ output "server_api_key" {
 
 ### Optional
 
-- `ip_allowlist` (Set of String) The CIDR ranges, IPv4 or IPv6, the key may be used from. Unset or empty, it may be used from anywhere.
+- `ip_allowlist` (Set of String) The CIDR ranges, IPv4 or IPv6, the key may be used from; a single address is a `/32` or `/128`. Unset or empty, it may be used from anywhere.
 - `rotate_when_changed` (Map of String) Arbitrary values; any change rotates the key.
 
 ### Read-Only

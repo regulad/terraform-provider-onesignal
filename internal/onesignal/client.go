@@ -23,8 +23,9 @@ import (
 // DefaultBaseURL is OneSignal's API.
 const DefaultBaseURL = "https://api.onesignal.com"
 
-// Client calls OneSignal's API. Requests that need the Organization API key use
-// OrganizationKey; app-level requests take a key per call, falling back to it.
+// Client calls OneSignal's API. Apps and their API keys take OrganizationKey.
+// Segments and templates take an App API key per call: OneSignal refuses the
+// Organization key there.
 type Client struct {
 	BaseURL         string
 	OrganizationKey string
@@ -80,13 +81,6 @@ func IsNotFound(err error) bool {
 
 // ErrNotFound is returned for an object a listing does not contain.
 var ErrNotFound = &Error{StatusCode: http.StatusNotFound, Messages: []string{"not found"}}
-
-func (c *Client) key(appKey string) string {
-	if appKey != "" {
-		return appKey
-	}
-	return c.OrganizationKey
-}
 
 // do sends a request with key and decodes a 2xx JSON body into out, if out is
 // not nil. It retries a 429 or 503, honouring Retry-After.
@@ -194,7 +188,7 @@ func errorMessages(data []byte) []string {
 		for _, item := range list {
 			var s string
 			if json.Unmarshal(item, &s) == nil {
-				out = append(out, s)
+				out = append(out, plainText(s))
 				continue
 			}
 			var structured struct {
@@ -217,6 +211,16 @@ func errorMessages(data []byte) []string {
 		text = text[:300]
 	}
 	return []string{text}
+}
+
+var (
+	htmlTag    = regexp.MustCompile(`<[^>]*>`)
+	whitespace = regexp.MustCompile(`\s+`)
+)
+
+// plainText drops the HTML tags some of OneSignal's messages carry.
+func plainText(s string) string {
+	return strings.TrimSpace(whitespace.ReplaceAllString(htmlTag.ReplaceAllString(s, ""), " "))
 }
 
 // waitTemplateView spaces template views of one app by MinTemplateViewInterval.

@@ -71,9 +71,7 @@ type appSetting struct {
 
 var appSettings = []appSetting{
 	{"chrome_web_origin", func(m *appModel) *types.String { return &m.ChromeWebOrigin }, func(a *onesignal.App) string { return a.ChromeWebOrigin }},
-	{"site_name", func(m *appModel) *types.String { return &m.SiteName }, func(a *onesignal.App) string { return a.SiteName }},
 	{"safari_site_origin", func(m *appModel) *types.String { return &m.SafariSiteOrigin }, func(a *onesignal.App) string { return a.SafariSiteOrigin }},
-	{"chrome_web_default_notification_icon", func(m *appModel) *types.String { return &m.ChromeWebDefaultNotificationIcon }, func(a *onesignal.App) string { return a.ChromeWebDefaultNotificationIcon }},
 	{"safari_icon_256_256", func(m *appModel) *types.String { return &m.SafariIcon256 }, func(a *onesignal.App) string { return a.SafariIcon256 }},
 	{"apns_env", func(m *appModel) *types.String { return &m.APNSEnv }, func(a *onesignal.App) string { return a.APNSEnv }},
 	{"apns_key_id", func(m *appModel) *types.String { return &m.APNSKeyID }, func(a *onesignal.App) string { return a.APNSKeyID }},
@@ -117,6 +115,14 @@ func optionalComputedString(desc string) schema.StringAttribute {
 	}
 }
 
+func readOnlyString(desc string) schema.StringAttribute {
+	return schema.StringAttribute{
+		MarkdownDescription: desc,
+		Computed:            true,
+		PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
+	}
+}
+
 func writeOnly(desc string) schema.StringAttribute {
 	return schema.StringAttribute{
 		MarkdownDescription: desc + " Write-only: never stored or compared; sent on create and when its version changes.",
@@ -153,17 +159,16 @@ func (r *AppResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *
 				PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
 			},
 			"chrome_web_origin":                    optionalComputedString("The HTTPS origin of the website, for web push."),
-			"site_name":                            optionalComputedString("The website's name, used in web push titles."),
+			"site_name":                            readOnlyString("The website's name, used in web push titles. OneSignal's API accepts it and does not change it, so it is set in the dashboard."),
 			"safari_site_origin":                   optionalComputedString("The HTTPS origin for Safari web push."),
-			"chrome_web_default_notification_icon": optionalComputedString("An HTTPS URL of the default web push icon."),
+			"chrome_web_default_notification_icon": readOnlyString("An HTTPS URL of the default web push icon. OneSignal's API accepts it and does not change it, so it is set in the dashboard."),
 			"safari_icon_256_256":                  optionalComputedString("A 256×256 icon for legacy Safari."),
-			"apns_env":                             optionalComputedString("The APNs environment of the `.p8` key."),
+			"apns_env":                             optionalComputedString("The APNs environment of the credential. OneSignal keeps it, like the other APNs settings, only alongside an APNs credential, sent with it or already held."),
 			"apns_key_id":                          optionalComputedString("The APNs Key ID of the `.p8` key."),
 			"apns_team_id":                         optionalComputedString("The Apple Team ID."),
 			"apns_bundle_id":                       optionalComputedString("The iOS app's bundle ID."),
 			"additional_data_is_root_payload": schema.BoolAttribute{
-				MarkdownDescription: "Whether a notification's `data` goes in the push payload's root. Left unset, it is neither sent nor compared.",
-				Optional:            true,
+				MarkdownDescription: "Whether a notification's `data` goes in the push payload's root. OneSignal's API sets it to true and does not set it back, so it is set in the dashboard.",
 				Computed:            true,
 				PlanModifiers:       []planmodifier.Bool{boolplanmodifier.UseStateForUnknown()},
 			},
@@ -217,6 +222,8 @@ func setFromApp(m *appModel, a *onesignal.App) {
 	for _, s := range appSettings {
 		*s.attr(m) = types.StringValue(s.read(a))
 	}
+	m.SiteName = types.StringValue(a.SiteName)
+	m.ChromeWebDefaultNotificationIcon = types.StringValue(a.ChromeWebDefaultNotificationIcon)
 	m.AdditionalDataIsRootPayload = types.BoolValue(a.AdditionalDataIsRootPayload != nil && *a.AdditionalDataIsRootPayload)
 	m.APNSConfigured = types.BoolValue(a.APNSEnv != "")
 	m.FCMConfigured = types.BoolValue(a.FCMSenderID != "")
@@ -253,9 +260,6 @@ func (r *AppResource) Create(ctx context.Context, req resource.CreateRequest, re
 		if v := *s.attr(&plan); !v.IsNull() && !v.IsUnknown() {
 			fields[s.api] = v.ValueString()
 		}
-	}
-	if v := plan.AdditionalDataIsRootPayload; !v.IsNull() && !v.IsUnknown() {
-		fields["additional_data_is_root_payload"] = v.ValueBool()
 	}
 	credentialFields(fields, &config, func(appCredential) bool { return true })
 	id, err := r.client.CreateApp(ctx, fields)
@@ -308,9 +312,6 @@ func (r *AppResource) Update(ctx context.Context, req resource.UpdateRequest, re
 		if v := *s.attr(&plan); !v.IsNull() && !v.IsUnknown() && !v.Equal(*s.attr(&state)) {
 			fields[s.api] = v.ValueString()
 		}
-	}
-	if v := plan.AdditionalDataIsRootPayload; !v.IsNull() && !v.IsUnknown() && !v.Equal(state.AdditionalDataIsRootPayload) {
-		fields["additional_data_is_root_payload"] = v.ValueBool()
 	}
 	credentialFields(fields, &config, func(c appCredential) bool { return !c.version(&plan).Equal(c.version(&state)) })
 	if len(fields) > 0 {

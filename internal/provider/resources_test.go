@@ -131,9 +131,13 @@ resource "onesignal_app_api_key" "test" {
 				ExpectError: regexp.MustCompile(`Invalid CIDR range`),
 			},
 			{
-				Config: cfg("one", `["192.0.2.10/32", "2001:db8::10/128"]`, "1"),
+				// OneSignal returns the host routes as bare addresses and IPv6
+				// in canonical form; the plan stays empty, so the configured
+				// spelling was kept.
+				Config: cfg("one", `["192.0.2.10/32", "2001:db8::10/128", "2001:DB8:0:1::/64"]`, "1"),
 				Check: resource.ComposeTestCheckFunc(
-					resource.TestCheckResourceAttr("onesignal_app_api_key.test", "ip_allowlist.#", "2"),
+					resource.TestCheckResourceAttr("onesignal_app_api_key.test", "ip_allowlist.#", "3"),
+					resource.TestCheckTypeSetElemAttr("onesignal_app_api_key.test", "ip_allowlist.*", "2001:DB8:0:1::/64"),
 					func(s *terraform.State) error {
 						v, err := value(s)
 						if err != nil || !srv.KeyWorks(appID, v) {
@@ -184,18 +188,44 @@ resource "onesignal_app_api_key" "test" {
 	})
 }
 
+// appKeyConfig declares the App API key segments and templates are managed with.
+func appKeyConfig(appID string) string {
+	return fmt.Sprintf(`
+resource "onesignal_app_api_key" "k" {
+  app_id = %q
+  name   = "tofu"
+}
+`, appID)
+}
+
+// importedUnread checks that an imported segment or template holds only its
+// IDs, as it has no App API key to be read with until its first apply.
+func importedUnread(appID string) resource.ImportStateCheckFunc {
+	return func(states []*terraform.InstanceState) error {
+		if len(states) != 1 {
+			return fmt.Errorf("imported %d instances", len(states))
+		}
+		a := states[0].Attributes
+		if a["app_id"] != appID || a["id"] == "" || a["name"] != "" {
+			return fmt.Errorf("imported state: app_id %q id %q name %q", a["app_id"], a["id"], a["name"])
+		}
+		return nil
+	}
+}
+
 func TestAccSegment(t *testing.T) {
 	srv := fake.New()
 	defer srv.Close()
 	appID := srv.AddApp("app", nil)
 	cfg := func(description, country string) string {
-		return providerConfig(srv) + fmt.Sprintf(`
+		return providerConfig(srv) + appKeyConfig(appID) + fmt.Sprintf(`
 resource "onesignal_segment" "test" {
   app_id      = %q
+  api_key     = onesignal_app_api_key.k.value
   name        = "Engaged"
   description = %s
   filters = [
-    { field = "session_count", relation = ">", value = "5" },
+    { field = "last_session", relation = "<", hours_ago = "168" },
     { field = "country", relation = "=", value = %q },
     { operator = "OR" },
     { field = "tag", key = "plan", relation = "=", value = "pro" },
@@ -210,6 +240,7 @@ resource "onesignal_segment" "test" {
 				Config: providerConfig(srv) + fmt.Sprintf(`
 resource "onesignal_segment" "test" {
   app_id  = %q
+  api_key = "unused"
   name    = "Bad"
   filters = [{ field = "country", relation = "=", value = "US" }, { operator = "AND" }, { field = "language", relation = "=", value = "en" }]
 }
@@ -217,11 +248,23 @@ resource "onesignal_segment" "test" {
 				ExpectError: regexp.MustCompile(`Only OR is written`),
 			},
 			{
-				// The API spells out the AND between the first two filters; the
-				// plan stays empty, so it was dropped on read.
+				Config: providerConfig(srv) + fmt.Sprintf(`
+resource "onesignal_segment" "test" {
+  app_id  = %q
+  name    = "No key"
+  filters = [{ field = "country", relation = "=", value = "US" }]
+}
+`, appID),
+				ExpectError: regexp.MustCompile(`"api_key" is required`),
+			},
+			{
+				// The API spells out the AND between the first two filters and
+				// writes hours_ago as "168.0"; the plan stays empty, so both were
+				// taken as written.
 				Config: cfg(`"Frequent users"`, "US"),
 				Check: resource.ComposeTestCheckFunc(
 					resource.TestCheckResourceAttr("onesignal_segment.test", "filters.#", "4"),
+					resource.TestCheckResourceAttr("onesignal_segment.test", "filters.0.hours_ago", "168"),
 					resource.TestCheckResourceAttr("onesignal_segment.test", "filters.2.operator", "OR"),
 					resource.TestCheckResourceAttr("onesignal_segment.test", "source", "custom"),
 				),
@@ -240,7 +283,7 @@ resource "onesignal_segment" "test" {
 					id, err := stateAttr(s, "onesignal_segment.test", "id")
 					return appID + "/" + id, err
 				},
-				ImportStateVerify: true,
+				ImportStateCheck: importedUnread(appID),
 			},
 		},
 	})
@@ -250,61 +293,101 @@ func TestAccTemplate(t *testing.T) {
 	srv := fake.New()
 	defer srv.Close()
 	appID := srv.AddApp("app", nil)
-	cfg := func(headings string) string {
-		return providerConfig(srv) + fmt.Sprintf(`
+	cfg := func(headings, platforms string) string {
+		return providerConfig(srv) + appKeyConfig(appID) + fmt.Sprintf(`
 resource "onesignal_template" "push" {
   app_id         = %q
+  api_key        = onesignal_app_api_key.k.value
   name           = "Welcome"
   channel        = "push"
   contents       = { en = "Hello", es = "Hola" }
   headings       = %s
   url            = "https://example.com/welcome"
-  push_platforms = ["ios", "android"]
+  global_image   = "https://example.com/welcome.png"
+  push_platforms = %s
+}
+
+resource "onesignal_template" "web" {
+  app_id   = %q
+  api_key  = onesignal_app_api_key.k.value
+  name     = "Web only"
+  channel  = "push"
+  contents = { en = "Hello" }
 }
 
 resource "onesignal_template" "email" {
-  app_id        = %q
-  name          = "Receipt"
-  channel       = "email"
-  email_subject = "Your receipt"
-  email_body    = "<p>Thanks</p>"
+  app_id          = %q
+  api_key         = onesignal_app_api_key.k.value
+  name            = "Receipt"
+  channel         = "email"
+  email_subject   = "Your receipt"
+  email_body      = "<p>Thanks</p>"
+  email_from_name = "Example"
 }
 
 resource "onesignal_template" "sms" {
-  app_id   = %q
-  name     = "Code"
-  channel  = "sms"
-  contents = { en = "Your code is 123" }
+  app_id         = %q
+  api_key        = onesignal_app_api_key.k.value
+  name           = "Code"
+  channel        = "sms"
+  contents       = { en = "Your code is 123" }
+  sms_media_urls = ["https://example.com/code.png"]
 }
-`, appID, headings, appID, appID)
+`, appID, headings, platforms, appID, appID, appID)
+	}
+	bad := func(body string) string {
+		return providerConfig(srv) + fmt.Sprintf(`
+resource "onesignal_template" "bad" {
+  app_id  = %q
+  api_key = "unused"
+  name    = "Bad"
+%s
+}
+`, appID, body)
 	}
 	resource.Test(t, resource.TestCase{
 		ProtoV6ProviderFactories: testFactories,
 		Steps: []resource.TestStep{
 			{
-				Config: providerConfig(srv) + fmt.Sprintf(`
-resource "onesignal_template" "bad" {
-  app_id   = %q
-  name     = "No English"
-  channel  = "push"
-  contents = { es = "Hola" }
-}
-`, appID),
+				Config:      bad(`  channel = "push"` + "\n" + `  contents = { es = "Hola" }`),
 				ExpectError: regexp.MustCompile(`Missing English contents`),
 			},
 			{
-				Config: cfg(`{ en = "Welcome" }`),
+				Config:      bad(`  channel = "sms"` + "\n" + `  contents = { en = "Hi" }` + "\n" + `  email_subject = "S"`),
+				ExpectError: regexp.MustCompile(`is for email templates, not sms`),
+			},
+			{
+				Config:      bad(`  channel = "email"` + "\n" + `  email_subject = "S"` + "\n" + `  email_body = "B"` + "\n" + `  push_platforms = ["ios"]`),
+				ExpectError: regexp.MustCompile(`is for push templates`),
+			},
+			{
+				Config:      bad(`  channel = "push"` + "\n" + `  contents = { en = "Hi" }` + "\n" + `  headings = {}`),
+				ExpectError: regexp.MustCompile(`at least 1`),
+			},
+			{
+				Config: cfg(`{ en = "Welcome" }`, `["ios", "android"]`),
 				Check: resource.ComposeTestCheckFunc(
 					resource.TestCheckResourceAttr("onesignal_template.push", "push_platforms.#", "2"),
 					resource.TestCheckResourceAttr("onesignal_template.push", "headings.en", "Welcome"),
+					resource.TestCheckResourceAttr("onesignal_template.push", "global_image", "https://example.com/welcome.png"),
+					// A new template without platforms gets OneSignal's default.
+					resource.TestCheckResourceAttr("onesignal_template.web", "push_platforms.#", "3"),
+					resource.TestCheckTypeSetElemAttr("onesignal_template.web", "push_platforms.*", "edge"),
 					resource.TestCheckResourceAttr("onesignal_template.email", "channel", "email"),
+					resource.TestCheckNoResourceAttr("onesignal_template.email", "push_platforms"),
 					resource.TestCheckResourceAttr("onesignal_template.sms", "channel", "sms"),
+					resource.TestCheckResourceAttr("onesignal_template.sms", "sms_media_urls.#", "1"),
 				),
 			},
 			{
-				// Removing headings clears them.
-				Config: cfg(`null`),
-				Check:  resource.TestCheckNoResourceAttr("onesignal_template.push", "headings.%"),
+				// Removing headings clears them, and a platform left out is
+				// sent as false.
+				Config: cfg(`null`, `["ios"]`),
+				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckNoResourceAttr("onesignal_template.push", "headings.%"),
+					resource.TestCheckResourceAttr("onesignal_template.push", "push_platforms.#", "1"),
+					resource.TestCheckTypeSetElemAttr("onesignal_template.push", "push_platforms.*", "ios"),
+				),
 			},
 			{
 				ResourceName: "onesignal_template.push",
@@ -313,8 +396,7 @@ resource "onesignal_template" "bad" {
 					id, err := stateAttr(s, "onesignal_template.push", "id")
 					return appID + "/" + id, err
 				},
-				ImportStateVerify:       true,
-				ImportStateVerifyIgnore: []string{"push_platforms"},
+				ImportStateCheck: importedUnread(appID),
 			},
 		},
 	})

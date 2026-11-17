@@ -2,12 +2,12 @@
 page_title: "onesignal_segment Resource - OneSignal"
 subcategory: ""
 description: |-
-  A segment of an app, defined by filters. OneSignal's API cannot manage segments built on message-event or custom-event filters, and is not available on every plan.
+  A segment of an app, defined by filters. OneSignal's API cannot manage segments built on message-event or custom-event filters, and refuses to create segments on some plans, the Free plan among them (HTTP 403). An imported segment is not read until its first apply, which needs api_key and writes the configuration over it.
 ---
 
 # onesignal_segment (Resource)
 
-A segment of an app, defined by filters. OneSignal's API cannot manage segments built on message-event or custom-event filters, and is not available on every plan.
+A segment of an app, defined by filters. OneSignal's API cannot manage segments built on message-event or custom-event filters, and refuses to create segments on some plans, the Free plan among them (HTTP 403). An imported segment is not read until its first apply, which needs `api_key` and writes the configuration over it.
 
 ## Example Usage
 
@@ -33,13 +33,13 @@ resource "onesignal_segment" "engaged" {
 
 ### Required
 
+- `api_key` (String, Sensitive) An App API key of the app, normally an `onesignal_app_api_key`'s `value`. OneSignal refuses the Organization API key for segments and templates.
 - `app_id` (String) The app the segment belongs to.
 - `filters` (Attributes List) The filters, in order: each entry is a filter, or `{ operator = "OR" }`. Adjacent filters are joined by AND, which binds tighter than OR, so the list is an OR of AND groups. Every operand is a string, as OneSignal stores it. (see [below for nested schema](#nestedatt--filters))
 - `name` (String) The segment's name, unique within the app.
 
 ### Optional
 
-- `api_key` (String, Sensitive) An App API key of the app, such as an `onesignal_app_api_key`'s `value`, for OneSignal's app-level endpoints. Unset, the provider's Organization API key is used.
 - `description` (String) The segment's description.
 
 ### Read-Only

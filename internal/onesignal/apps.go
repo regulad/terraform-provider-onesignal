@@ -42,8 +42,8 @@ func (c *Client) ListApps(ctx context.Context) ([]App, error) {
 	return apps, err
 }
 
-// GetApp returns one app, found through ListApps, which takes the Organization
-// key, where View an app is documented with an App API key only.
+// GetApp returns one app, found through ListApps, so that a missing app is
+// plainly absent.
 func (c *Client) GetApp(ctx context.Context, id string) (*App, error) {
 	apps, err := c.ListApps(ctx)
 	if err != nil {

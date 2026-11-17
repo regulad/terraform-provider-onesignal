@@ -1,22 +1,30 @@
 // SPDX-License-Identifier: MPL-2.0
 
-// Package fake is an in-memory stand-in for OneSignal's configuration API, as
-// its reference documents it, quirks included, for tests.
+// Package fake is an in-memory stand-in for OneSignal's configuration API, for
+// tests. It follows what the live API was seen to do, quirks included, and its
+// reference where nothing was seen.
 package fake
 
 import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 )
 
 // PushPlatformFlags are the template platform flags OneSignal returns.
-var PushPlatformFlags = []string{"isIos", "isAndroid", "isHuawei", "isAnyWeb", "isChromeWeb", "isFirefox", "isSafari", "isWP_WNS", "isAdm"}
+var PushPlatformFlags = []string{"isIos", "isAndroid", "isHuawei", "isAdm", "isChrome", "isChromeWeb", "isFirefox", "isSafari", "isEdge", "isMacOSX", "isWP", "isWP_WNS", "isAlexa"}
+
+// defaultPushPlatforms are those a push template created without flags targets.
+var defaultPushPlatforms = map[string]bool{"isChromeWeb": true, "isEdge": true, "isFirefox": true}
+
+const accessDenied = "Access denied.  Please include an 'Authorization: ...' header with a valid API key (https://documentation.onesignal.com/docs/en/keys-and-ids#api-keys)."
 
 // Server is a fake OneSignal API.
 type Server struct {
@@ -101,13 +109,40 @@ func errorBody(w http.ResponseWriter, status int, msg string) {
 	write(w, status, map[string]any{"errors": []string{msg}})
 }
 
-// writableAppFields are those create and update accept.
+// writableAppFields are those create and update store. site_name and
+// chrome_web_default_notification_icon are accepted and dropped, as live.
 var writableAppFields = map[string]bool{
-	"name": true, "organization_id": true, "chrome_web_origin": true, "site_name": true,
-	"safari_site_origin": true, "chrome_web_default_notification_icon": true, "safari_icon_256_256": true,
+	"name": true, "organization_id": true, "chrome_web_origin": true,
+	"safari_site_origin": true, "safari_icon_256_256": true,
 	"safari_apns_p12": true, "safari_apns_p12_password": true, "fcm_v1_service_account_json": true,
-	"apns_p8": true, "apns_env": true, "apns_key_id": true, "apns_team_id": true, "apns_bundle_id": true,
-	"apns_p12": true, "apns_p12_password": true, "additional_data_is_root_payload": true,
+	"apns_p8": true, "apns_p12": true, "apns_p12_password": true,
+}
+
+// apnsSettings are kept only alongside an APNs credential, sent with them or
+// already held.
+var apnsSettings = []string{"apns_env", "apns_key_id", "apns_team_id", "apns_bundle_id"}
+
+// applyAppFields stores body's fields on app.
+func applyAppFields(app, body map[string]any) {
+	for k, v := range body {
+		if writableAppFields[k] {
+			app[k] = v
+		}
+	}
+	if app["apns_p8"] != nil || app["apns_p12"] != nil {
+		for _, k := range apnsSettings {
+			if v, ok := body[k]; ok {
+				app[k] = v
+			}
+		}
+	}
+	// Live, true sticks and false is dropped.
+	if b, _ := body["additional_data_is_root_payload"].(bool); b {
+		app["additional_data_is_root_payload"] = true
+	}
+	if _, ok := body["fcm_v1_service_account_json"]; ok {
+		app["fcm_sender_id"] = "123456789012"
+	}
 }
 
 func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
@@ -126,6 +161,17 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 	}
 	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
 	switch {
+	case parts[0] == "apps" && len(parts) == 2 && r.Method == http.MethodGet:
+		// Viewing an app takes the Organization key or one of the app's keys.
+		app, ok := s.apps[parts[1]]
+		switch {
+		case !org && s.secrets[key] != parts[1]:
+			errorBody(w, http.StatusUnauthorized, accessDenied)
+		case !ok:
+			errorBody(w, http.StatusNotFound, "Couldn't find app with id = "+parts[1])
+		default:
+			write(w, http.StatusOK, app)
+		}
 	case parts[0] == "apps" && len(parts) <= 2:
 		s.handleApps(w, r, parts, body, org)
 	case parts[0] == "apps" && len(parts) >= 4 && parts[2] == "auth" && parts[3] == "tokens":
@@ -135,8 +181,9 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		}
 		s.handleKeys(w, r, parts, body)
 	case parts[0] == "apps" && len(parts) >= 3 && parts[2] == "segments":
-		if !org && s.secrets[key] != parts[1] {
-			errorBody(w, http.StatusUnauthorized, "Access denied.")
+		// Live, the Organization key is refused here.
+		if s.secrets[key] != parts[1] {
+			errorBody(w, http.StatusUnauthorized, accessDenied)
 			return
 		}
 		s.handleSegments(w, r, parts, body)
@@ -145,8 +192,8 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost && len(parts) == 1 {
 			appID, _ = body["app_id"].(string)
 		}
-		if !org && s.secrets[key] != appID {
-			errorBody(w, http.StatusUnauthorized, "Access denied.")
+		if s.secrets[key] != appID {
+			errorBody(w, http.StatusUnauthorized, accessDenied)
 			return
 		}
 		s.handleTemplates(w, r, parts, body, appID)
@@ -174,11 +221,7 @@ func (s *Server) handleApps(w http.ResponseWriter, r *http.Request, parts []stri
 		}
 		id := newID()
 		app := map[string]any{"id": id, "players": 0, "messageable_players": 0}
-		for k, v := range body {
-			if writableAppFields[k] {
-				app[k] = v
-			}
-		}
+		applyAppFields(app, body)
 		s.apps[id] = app
 		write(w, http.StatusOK, map[string]any{"id": id, "name": app["name"], "organization_id": app["organization_id"]})
 	case r.Method == http.MethodPut && len(parts) == 2:
@@ -187,19 +230,41 @@ func (s *Server) handleApps(w http.ResponseWriter, r *http.Request, parts []stri
 			errorBody(w, http.StatusNotFound, "Couldn't find app with id = "+parts[1])
 			return
 		}
-		// The fake merges: fields not sent are kept.
-		for k, v := range body {
-			if writableAppFields[k] {
-				app[k] = v
-			}
+		if v, ok := body["chrome_web_origin"]; ok && v == "" {
+			errorBody(w, http.StatusBadRequest, "<p>You must provide your <strong>Site URL</strong>. Include the protocol (<code class='keep-word'>http://</code> or <code class='keep-word'>https://</code>).</p>")
+			return
 		}
-		if _, ok := body["fcm_v1_service_account_json"]; ok {
-			app["fcm_sender_id"] = "123456789012"
-		}
+		// Live, an update merges: fields not sent are kept.
+		applyAppFields(app, body)
 		write(w, http.StatusOK, map[string]any{"id": app["id"], "name": app["name"]})
 	default:
 		errorBody(w, http.StatusNotFound, "not found")
 	}
+}
+
+// storedAllowlist checks an allowlist as sent and returns it as OneSignal keeps
+// it: CIDR ranges only, IPv6 in canonical form, and a /32 or /128 as a bare
+// address. A nil list is returned when none was sent.
+func storedAllowlist(v any) ([]any, bool) {
+	raw, ok := v.([]any)
+	if !ok {
+		return nil, v == nil
+	}
+	out := []any{}
+	for _, e := range raw {
+		s, _ := e.(string)
+		ip, n, err := net.ParseCIDR(s)
+		if err != nil {
+			return nil, false
+		}
+		ones, bits := n.Mask.Size()
+		if ones == bits {
+			out = append(out, ip.String())
+		} else {
+			out = append(out, fmt.Sprintf("%s/%d", ip, ones))
+		}
+	}
+	return out, true
 }
 
 func (s *Server) handleKeys(w http.ResponseWriter, r *http.Request, parts []string, body map[string]any) {
@@ -225,13 +290,18 @@ func (s *Server) handleKeys(w http.ResponseWriter, r *http.Request, parts []stri
 			write(w, http.StatusBadRequest, map[string]any{})
 			return
 		}
+		allowlist, ok := storedAllowlist(body["ip_allowlist"])
+		if !ok {
+			errorBody(w, http.StatusBadRequest, "ip_allowlist must be an array of networks in CIDR notation")
+			return
+		}
 		id, secret := newID(), "os_v2_app_"+newID()
 		k := map[string]any{"token_id": id, "name": body["name"], "ip_allowlist_mode": "disabled", "ip_allowlist": []any{}, "created_at": now, "updated_at": now}
 		if v, ok := body["ip_allowlist_mode"]; ok {
 			k["ip_allowlist_mode"] = v
 		}
-		if v, ok := body["ip_allowlist"]; ok && v != nil {
-			k["ip_allowlist"] = v
+		if allowlist != nil {
+			k["ip_allowlist"] = allowlist
 		}
 		s.keys[appID] = append(s.keys[appID], k)
 		s.secrets[secret] = appID
@@ -243,10 +313,18 @@ func (s *Server) handleKeys(w http.ResponseWriter, r *http.Request, parts []stri
 			errorBody(w, http.StatusNotFound, "Token not found")
 			return
 		}
-		for _, f := range []string{"name", "ip_allowlist_mode", "ip_allowlist"} {
+		allowlist, ok := storedAllowlist(body["ip_allowlist"])
+		if !ok {
+			errorBody(w, http.StatusBadRequest, "ip_allowlist must be an array of networks in CIDR notation")
+			return
+		}
+		for _, f := range []string{"name", "ip_allowlist_mode"} {
 			if v, ok := body[f]; ok {
 				s.keys[appID][i][f] = v
 			}
+		}
+		if allowlist != nil {
+			s.keys[appID][i]["ip_allowlist"] = allowlist
 		}
 		s.keys[appID][i]["updated_at"] = now
 		write(w, http.StatusOK, map[string]any{})
@@ -315,7 +393,7 @@ func (s *Server) handleSegments(w http.ResponseWriter, r *http.Request, parts []
 						}
 					}
 				}
-				filters = append(filters, f)
+				filters = append(filters, decimalHoursAgo(f))
 			}
 			out["payload"] = map[string]any{"id": seg["id"], "name": seg["name"], "description": seg["description"], "source": seg["source"], "filters": filters, "created_at": 1700000000}
 		}
@@ -358,39 +436,68 @@ func (s *Server) handleSegments(w http.ResponseWriter, r *http.Request, parts []
 	}
 }
 
+// decimalHoursAgo returns a filter with hours_ago written as OneSignal returns
+// it on a default segment: "168.0" for 168.
+func decimalHoursAgo(f any) any {
+	m, ok := f.(map[string]any)
+	if !ok {
+		return f
+	}
+	raw, ok := m["hours_ago"].(string)
+	if !ok {
+		return f
+	}
+	n, err := strconv.ParseFloat(raw, 64)
+	if err != nil {
+		return f
+	}
+	out := map[string]any{}
+	for k, v := range m {
+		out[k] = v
+	}
+	text := strconv.FormatFloat(n, 'f', -1, 64)
+	if !strings.Contains(text, ".") {
+		text += ".0"
+	}
+	out["hours_ago"] = text
+	return out
+}
+
+// templateFields are the content fields OneSignal keeps; others are dropped.
+var templateFields = map[string]bool{
+	"contents": true, "headings": true, "subtitle": true, "url": true, "global_image": true,
+	"email_subject": true, "email_body": true, "email_preheader": true, "email_from_name": true,
+	"email_from_address": true, "email_reply_to_address": true, "email_bcc": true,
+	"sms_from": true, "sms_media_urls": true, "isEmail": true, "isSMS": true,
+}
+
+func init() {
+	for _, f := range PushPlatformFlags {
+		templateFields[f] = true
+	}
+}
+
 func templateResponse(t map[string]any) map[string]any {
-	content := map[string]any{}
 	channel := "push"
 	if b, _ := t["isEmail"].(bool); b {
 		channel = "email"
 	} else if b, _ := t["isSMS"].(bool); b {
-		channel = "SMS"
+		channel = "sms"
+	}
+	// Every field comes back, null where unset; contents and headings as {}.
+	content := map[string]any{"contents": map[string]any{}, "headings": map[string]any{}}
+	for f := range templateFields {
+		if _, ok := content[f]; !ok {
+			content[f] = nil
+		}
 	}
 	for k, v := range t {
-		switch k {
-		case "id", "name", "app_id", "created_at", "updated_at":
-		default:
+		if templateFields[k] {
 			content[k] = v
 		}
 	}
-	if channel == "push" {
-		// Every flag comes back: true where targeted, null otherwise; all true
-		// when none was set.
-		set := false
-		for _, f := range PushPlatformFlags {
-			if b, _ := t[f].(bool); b {
-				set = true
-			}
-		}
-		for _, f := range PushPlatformFlags {
-			if !set {
-				content[f] = true
-			} else if b, _ := t[f].(bool); b {
-				content[f] = true
-			} else {
-				content[f] = nil
-			}
-		}
+	if channel == "email" {
+		content["disable_email_click_tracking"] = false
 	}
 	return map[string]any{"id": t["id"], "name": t["name"], "channel": channel, "created_at": t["created_at"], "updated_at": t["updated_at"], "content": content}
 }
@@ -415,10 +522,19 @@ func (s *Server) handleTemplates(w http.ResponseWriter, r *http.Request, parts [
 			return
 		}
 		id := newID()
-		t := map[string]any{"id": id, "app_id": appID, "created_at": now, "updated_at": now}
+		t := map[string]any{"id": id, "app_id": appID, "created_at": now, "updated_at": now, "name": body["name"]}
+		flagged := false
 		for k, v := range body {
-			if k != "app_id" {
+			if templateFields[k] && v != nil {
 				t[k] = v
+			}
+			if strings.HasPrefix(k, "is") && k != "isEmail" && k != "isSMS" {
+				flagged = true
+			}
+		}
+		if channel := templateResponse(t)["channel"]; channel == "push" && !flagged {
+			for _, f := range PushPlatformFlags {
+				t[f] = defaultPushPlatforms[f]
 			}
 		}
 		s.templates[id] = t
@@ -437,11 +553,21 @@ func (s *Server) handleTemplates(w http.ResponseWriter, r *http.Request, parts [
 				errorBody(w, http.StatusBadRequest, "name is required")
 				return
 			}
-			// The fake merges, and clears a field sent as null.
+			// Live, an update merges: a field sent replaces it whole, null or ""
+			// clears it, and a map sent as null fails.
+			for _, m := range []string{"contents", "headings", "subtitle"} {
+				if v, ok := body[m]; ok && v == nil {
+					write(w, http.StatusInternalServerError, map[string]any{"status": 500, "error": "Internal Server Error"})
+					return
+				}
+			}
+			t["name"] = body["name"]
 			for k, v := range body {
-				if v == nil {
+				switch {
+				case !templateFields[k]:
+				case v == nil || v == "":
 					delete(t, k)
-				} else {
+				default:
 					t[k] = v
 				}
 			}

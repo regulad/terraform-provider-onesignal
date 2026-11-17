@@ -71,7 +71,7 @@ func templatePath(id string) string {
 // CreateTemplate creates a template; the app ID travels in the body.
 func (c *Client) CreateTemplate(ctx context.Context, appKey, appID, name, channel string, fields TemplateFields) (*Template, error) {
 	var t Template
-	err := c.do(ctx, http.MethodPost, "/templates", nil, c.key(appKey), templateBody(appID, name, channel, fields), &t)
+	err := c.do(ctx, http.MethodPost, "/templates", nil, appKey, templateBody(appID, name, channel, fields), &t)
 	return &t, err
 }
 
@@ -81,18 +81,18 @@ func (c *Client) GetTemplate(ctx context.Context, appKey, appID, id string) (*Te
 		return nil, err
 	}
 	var t Template
-	err := c.do(ctx, http.MethodGet, templatePath(id), url.Values{"app_id": {appID}}, c.key(appKey), nil, &t)
+	err := c.do(ctx, http.MethodGet, templatePath(id), url.Values{"app_id": {appID}}, appKey, nil, &t)
 	return &t, err
 }
 
 // UpdateTemplate changes a template in place; OneSignal requires the name.
 func (c *Client) UpdateTemplate(ctx context.Context, appKey, appID, id, name, channel string, fields TemplateFields) error {
-	return c.do(ctx, http.MethodPatch, templatePath(id), url.Values{"app_id": {appID}}, c.key(appKey), templateBody("", name, channel, fields), nil)
+	return c.do(ctx, http.MethodPatch, templatePath(id), url.Values{"app_id": {appID}}, appKey, templateBody("", name, channel, fields), nil)
 }
 
 // DeleteTemplate deletes a template.
 func (c *Client) DeleteTemplate(ctx context.Context, appKey, appID, id string) error {
-	return c.do(ctx, http.MethodDelete, templatePath(id), url.Values{"app_id": {appID}}, c.key(appKey), nil, nil)
+	return c.do(ctx, http.MethodDelete, templatePath(id), url.Values{"app_id": {appID}}, appKey, nil, nil)
 }
 
 // jsonScalar renders a non-string JSON scalar as the string OneSignal would

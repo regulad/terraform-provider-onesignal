@@ -2,12 +2,12 @@
 page_title: "onesignal_template Resource - OneSignal"
 subcategory: ""
 description: |-
-  A message template of an app, for one channel. A field OneSignal does not return keeps its configured value, so changes made outside OpenTofu show only for the fields it returns.
+  A message template of an app, for one channel. An imported template is not read until its first apply, which needs api_key and writes the configuration over it.
 ---
 
 # onesignal_template (Resource)
 
-A message template of an app, for one channel. A field OneSignal does not return keeps its configured value, so changes made outside OpenTofu show only for the fields it returns.
+A message template of an app, for one channel. An imported template is not read until its first apply, which needs `api_key` and writes the configuration over it.
 
 ## Example Usage
 
@@ -48,33 +48,28 @@ resource "onesignal_template" "code" {
 
 ### Required
 
+- `api_key` (String, Sensitive) An App API key of the app, normally an `onesignal_app_api_key`'s `value`. OneSignal refuses the Organization API key for segments and templates.
 - `app_id` (String) The app the template belongs to.
 - `channel` (String) `push`, `email` or `sms`. Changing it replaces the template.
 - `name` (String) The template's name.
 
 ### Optional
 
-- `api_key` (String, Sensitive) An App API key of the app, such as an `onesignal_app_api_key`'s `value`, for OneSignal's app-level endpoints. Unset, the provider's Organization API key is used.
-- `app_url` (String) Push: the URL opened on tap in the mobile apps.
-- `big_picture` (String) Push: Android's large image.
-- `chrome_web_image` (String) Push: Chrome's large image.
-- `contents` (Map of String) The message, by language code; push and SMS need `en`.
-- `data` (Map of String) Push: custom data delivered with the notification.
-- `disable_email_click_tracking` (Boolean) Email: whether link clicks go untracked.
-- `email_bcc` (List of String) Email: up to five BCC addresses, with OneSignal's own email service.
+- `contents` (Map of String) Push and SMS: the message, by language code, with at least `en`.
+- `email_bcc` (List of String) Email: BCC addresses. OneSignal accepts them only on its own email platform.
 - `email_body` (String) Email: the HTML body.
 - `email_from_address` (String) Email: the sender's address.
 - `email_from_name` (String) Email: the sender's name.
 - `email_preheader` (String) Email: the preview text.
 - `email_reply_to_address` (String) Email: the reply-to address.
 - `email_subject` (String) Email: the subject.
+- `global_image` (String) Push: the URL of an image shown with the notification.
 - `headings` (Map of String) Push: the title, by language code.
-- `push_platforms` (Set of String) Push: the platforms targeted. Unset, every platform is.
+- `push_platforms` (Set of String) Push: the platforms targeted, each OneSignal's flag in snake case without its `is`: `adm`, `alexa`, `android`, `chrome`, `chrome_web`, `edge`, `firefox`, `huawei`, `ios`, `macosx`, `safari`, `wp`, `wp_wns`. Set, every flag is sent, false for those left out. Unset, a new template targets OneSignal's default, web push on Chrome, Edge and Firefox (`chrome_web`, `edge`, `firefox`), and an existing one keeps its platforms.
 - `sms_from` (String) SMS: the sender, a Messaging Service SID or an E.164 number.
 - `sms_media_urls` (List of String) SMS: media URLs, which make it an MMS.
 - `subtitle` (Map of String) Push: the subtitle, by language code.
 - `url` (String) Push: the URL opened on tap.
-- `web_url` (String) Push: the URL opened on tap in browsers.
 
 ### Read-Only
 

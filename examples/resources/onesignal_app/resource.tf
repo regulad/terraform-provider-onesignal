@@ -2,7 +2,6 @@ resource "onesignal_app" "example" {
   name              = "Example"
   organization_id   = "00000000-0000-0000-0000-000000000000"
   chrome_web_origin = "https://example.com"
-  site_name         = "Example"
 
   apns_env       = "production"
   apns_key_id    = "ABCDE12345"
