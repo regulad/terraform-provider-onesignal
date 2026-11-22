@@ -1,0 +1,21 @@
+# Repository configuration, managed by the Settings app
+# (https://github.com/repository-settings/app). The shared defaults come from
+# regulad/.github; this file sets only what is this repository's own.
+_extends: .github
+
+repository:
+  name: terraform-provider-onesignal
+  description: >-
+    OpenTofu/Terraform provider for OneSignal's configuration API: apps, API
+    keys, segments and templates
+  homepage: ""
+  private: false
+  # Topics: comma-and-space separated string, NOT a YAML list.
+  topics: terraform, terraform-provider, opentofu, onesignal, go, push-notifications
+  default_branch: main
+
+# Dependabot's ecosystem label, applied to its pull requests.
+labels:
+  - name: go
+    color: "16e2e2"
+    description: Pull requests that update go code
