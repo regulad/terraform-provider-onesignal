@@ -1,30 +1,61 @@
 # See GitHub's documentation for more information on this file:
 # https://docs.github.com/en/code-security/supply-chain-security/keeping-your-dependencies-updated-automatically/configuration-options-for-dependency-updates
+#
+# Each group holds only minor and patch updates, in one PR a week. workflows/dependabot-auto-merge.yml has GitHub merge
+# the Go groups, and security updates, once the Tests workflow passes. These wait for a person:
+# - the github-actions group, since workflow changes get a review;
+# - major updates, which come as PRs of their own.
+#
+# The cooldown holds each release back until it is two weeks old, so nothing ships while it's days old. Security
+# updates skip it.
 version: 2
 updates:
   # Maintain dependencies for Go modules
   - package-ecosystem: "gomod"
     directory: "/"
     schedule:
-      # Check for updates to Go modules every weekday
-      interval: "daily"
+      interval: "weekly"
+      day: "monday"
+      time: "05:00"
+      timezone: "America/New_York"
+    cooldown:
+      default-days: 14
     groups:
       # Group all terraform-plugin-(go|sdk|framework|testing) dependencies together
       "terraform-plugin":
         patterns:
           - "github.com/hashicorp/terraform-plugin-*"
+        update-types: ["minor", "patch"]
+      # Every other module. It excludes terraform-plugin's by the same pattern: a job refreshing one group takes every
+      # dependency that group contains, whatever other group it also belongs to.
+      "gomod":
+        update-types: ["minor", "patch"]
+        exclude-patterns:
+          - "github.com/hashicorp/terraform-plugin-*"
+  # tools/: terraform-plugin-docs, which make generate runs
   - package-ecosystem: "gomod"
     directory: "/tools"
     schedule:
-      interval: "daily"
+      interval: "weekly"
+      day: "monday"
+      time: "05:00"
+      timezone: "America/New_York"
+    cooldown:
+      default-days: 14
+    groups:
+      "tools":
+        update-types: ["minor", "patch"]
   - package-ecosystem: "github-actions"
     directory: "/"
     groups:
       "github-actions":
         patterns:
           - "*" # Group all GitHub Actions dependencies together
+        update-types: ["minor", "patch"]
     schedule:
       interval: "weekly"
       day: "monday"
-      time: "09:00"
-      timezone: "Etc/UTC"
+      time: "05:00"
+      timezone: "America/New_York"
+    cooldown:
+      default-days: 14
